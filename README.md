@@ -1,6 +1,14 @@
 # Agent_Manager_Skills
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](LICENSE)
+![Domain](https://img.shields.io/badge/Domain-CS_Research-informational)
+![Qoder](https://img.shields.io/badge/Qoder-supported-7B61FF)
+![Claude Code](https://img.shields.io/badge/Claude_Code-supported-D97757)
+![Docs](https://img.shields.io/badge/Docs-%E4%B8%AD%E6%96%87-red)
+
 这里收集一些用来约束编程 agent 工作方式的 skill。每个 skill 放在单独的文件夹里，可以单独安装。
+
+这些 skill 一般用于通用的计算机科研场景，例如在本机或 GPU 服务器上跑实验、训练模型、替换方法、整理实验记录和结果。
 
 ## Skill 列表
 
