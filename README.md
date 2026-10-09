@@ -4,6 +4,7 @@
 ![Domain](https://img.shields.io/badge/Domain-CS_Research-informational)
 ![Qoder](https://img.shields.io/badge/Qoder-supported-7B61FF)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-supported-D97757)
+![Codex](https://img.shields.io/badge/Codex-supported-10A37F)
 ![Docs](https://img.shields.io/badge/Docs-%E4%B8%AD%E6%96%87-red)
 
 这里收集一些用来约束编程 agent 工作方式的 skill。每个 skill 放在单独的文件夹里，可以单独安装。
