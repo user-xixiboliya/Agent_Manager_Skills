@@ -21,9 +21,11 @@
 
 | 文档 | 给谁看 | 记录什么 |
 |---|---|---|
-| CHANGELOG | 人 | 功能和行为的变化 |
-| 实验记录 | 人 | 实验设置、结果和结论 |
+| CHANGELOG | 人 | 宏观上怎么变的，几句话 |
+| 实验记录 | 人 | 跟进实验：设置、结果、结论，当前有效的是哪一套结果 |
 | 修改索引 | agent，也方便人查阅 | 每次修改了哪些文件、各改了什么，以及每个文件的职责 |
+
+修改记录不写替换原因和实验结论，写一句“原因见 CHANGELOG 某日条目”。分工见 records.md。
 
 ## 位置和结构
 
@@ -51,6 +53,7 @@ docs/agent-index/
 - 日期：2026-10-08
 - 任务：/clean-replace ResNet 编码器实验效果不好，换成 ViT
 - 替换关系：ResNetEncoder → ViTEncoder
+- 原因：见 CHANGELOG 2026-10-08 条目
 - 涉及概念：encoder、ResNet、ViT
 - 开始时的 commit：abc1234
 

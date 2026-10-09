@@ -1,6 +1,6 @@
 ---
 name: env-first
-description: 在安装、下载、使用 GPU 或 CUDA 之前，先查清机器环境（系统、GPU 与驱动、CUDA、Python 环境、镜像源与代理、磁盘、服务器的工作空间、外网访问和共用数据目录），并写进项目的 AGENTS.md 或 CLAUDE.md；关于机器状态的结论必须有命令输出作为依据；下载失败时先确认目标是否存在、版本是否匹配，再查镜像源和代理；禁止不查现有环境就新建环境、用 sed 等命令改坏文件、擅自修改全局配置。遇到安装、下载、GPU 相关任务时自动启用，用户明确要求使用本 skill 时也启用。
+description: 在安装、下载、使用 GPU 或 CUDA 之前，先查清机器环境（系统、GPU 与驱动、CUDA、Python 环境、镜像源与代理、磁盘、服务器的工作空间、外网访问和共用数据目录），并写进项目的 AGENTS.md 或 CLAUDE.md；关于机器状态的结论必须有命令输出作为依据；下载失败时先确认目标是否存在、版本是否匹配，再查镜像源和代理；禁止不查现有环境就新建环境、用 sed 等命令改坏文件、擅自修改全局配置、复用镜像标签；缓存不写进产物目录。遇到安装、下载、GPU 相关任务时自动启用，用户明确要求使用本 skill 时也启用。
 ---
 
 # Env First：先搞清机器，再动手
@@ -17,7 +17,7 @@ description: 在安装、下载、使用 GPU 或 CUDA 之前，先查清机器�
 
 ## 七条规则
 
-1. **结论要有依据**：“有没有 GPU”“装没装某个包”“网络通不通”，都要写出用的命令和关键输出。没查过的只能说“未检查”；命令本身失败了只能说“无法确认”。
+1. **结论要有依据**：“有没有 GPU”“装没装某个包”“网络通不通”，都要写出用的命令和关键输出。没查过的只能说“未检查”；命令本身失败了只能说“无法确认”。删除、移动、写入之后，用 `ls`、`find`、`git status` 核实结果，不只看工具的返回信息。
 2. **先找已有的，再考虑新建**：新建 Python 环境、安装 CUDA、下载模型之前，先查机器上是否已经有了。查过确实没有，再问用户。
 3. **下载失败先查目标是否存在**：先确认包名、版本、tag 存在，并且和 Python 版本、系统版本、CPU 架构、CUDA 版本匹配，再查网络、镜像源和代理。
 4. **不改全局配置**：pip、conda、docker、apt、git 的全局配置，`~/.bashrc`，`/usr/local/cuda` 软链接，都不由 agent 修改。需要临时换源或换路径时，只在单条命令上加参数或环境变量。
@@ -70,6 +70,7 @@ description: 在安装、下载、使用 GPU 或 CUDA 之前，先查清机器�
 - 项目里只有其中一个文件时，写进那个文件；两个都有时，问用户写哪个；都没有时，问用户要不要新建、建哪个。
 - 修改这两个文件前，先把要写的内容给用户看，用户同意后再写。
 - README 里已经写过的内容（项目介绍、安装步骤、用法），不要抄进来，需要时写一句“见 README 的某一节”。
+- “约定”一节除了用户给的约定，默认加上下面模板中的几条记录规则。这样以后的会话即使没有调用 clean-replace，也会遵守。这几条和其他内容一起给用户看，用户可以删改。
 
 “运行环境”一节的格式：
 
@@ -102,6 +103,12 @@ description: 在安装、下载、使用 GPU 或 CUDA 之前，先查清机器�
 
 ### 约定
 - 不使用 sudo
+- 临时脚本和诊断输出放在 `.agents/tmp/`（已加入 .gitignore），任务结束时列给用户
+- 同一件事只写一处，其他地方引用：CHANGELOG 写宏观变化，实验记录写实验和当前有效的结果，修改记录写改了哪些文件
+- 决策、状态类文件直接改成当前值，不一层层追加；历史在实验记录中写一行
+- 哈希和镜像 digest 只写在程序生成的文件里，文档写名称并指向那个文件
+- 镜像标签不复用，文档不依赖 `dev`、`latest`
+- 缓存不写进产物目录：<写明 HOME、CUDA_CACHE_PATH 等指到哪里>
 ```
 
 不能写进去的内容（AGENTS.md 和 CLAUDE.md 常常提交到 Git 里）：
@@ -238,6 +245,44 @@ description: 在安装、下载、使用 GPU 或 CUDA 之前，先查清机器�
 
 ---
 
+## 缓存不要落进产物目录
+
+很多工具把缓存写在 HOME 下。容器里的 HOME 如果被指到了输出目录，或者脚本在产物目录里运行，缓存就会混进结果和证据，甚至被打进交付包。
+
+常见的情况是容器挂载：把宿主机上的结果目录挂进容器，又把 HOME 设在这个目录下。
+
+```text
+docker run -v /data/runs/run_01/model:/workspace/model -e HOME=/workspace/model/home ...
+
+容器里看到的                     宿主机上真实的位置
+~  （HOME）            ═══►    /data/runs/run_01/model/home/
+~/.nv/ComputeCache     ═══►    /data/runs/run_01/model/home/.nv/ComputeCache
+```
+
+容器里的程序以为在往家目录写缓存，实际写进了宿主机的结果目录，容器退出后仍然留着。挂载给容器的结果目录不要同时用作 HOME；做不到时，用下表的环境变量把缓存指到结果目录以外。
+
+| 缓存 | 默认位置 | 指定方式 |
+|---|---|---|
+| CUDA JIT 编译缓存 | `~/.nv/ComputeCache` | `CUDA_CACHE_PATH` |
+| Python 字节码 | 源码旁的 `__pycache__` | `PYTHONPYCACHEPREFIX=<目录>`，或 `PYTHONDONTWRITEBYTECODE=1` |
+| torch 扩展编译 | `~/.cache/torch_extensions` | `TORCH_EXTENSIONS_DIR` |
+| triton | `~/.triton` | `TRITON_CACHE_DIR` |
+| 通用缓存 | `~/.cache` | `XDG_CACHE_HOME` |
+| HuggingFace、torch hub、pip | `~/.cache/...` | `HF_HOME`、`TORCH_HOME`、`PIP_CACHE_DIR` |
+
+- 运行容器或脚本前，确认 HOME 和上表中的路径都不在产物目录里。
+- 跑完后检查：`find <产物目录> \( -name .nv -o -name __pycache__ -o -name .cache -o -name .triton \) -print`。
+- 把实际用的缓存位置写进“运行环境”的“约定”一节。
+
+## 镜像标签
+
+- 每次重新构建镜像都用新标签，用过的标签不再指向别的镜像。
+- 文档和脚本不依赖 `dev`、`latest` 这类会被挪走的标签。
+- 需要记下精确版本时，由程序把镜像 ID 或 digest 写进运行记录：本地构建的用 `docker image inspect --format '{{.Id}}' <镜像>`，从仓库拉的用 `docker image inspect --format '{{index .RepoDigests 0}}' <镜像>`。文档里只写名称和“具体版本见某个文件”。
+- 引用一个标签之前，用 `docker image inspect` 确认它现在指向的就是你以为的那个镜像。
+
+---
+
 ## 镜像源和代理
 
 每个工具的配置是分开的，pip 配好了不代表 docker 和 git 也能用。
@@ -288,7 +333,7 @@ git -c http.proxy=http://<host>:<port> clone <url>
 | 为了恢复，运行 `git checkout -- .`、`git reset --hard`、`git clean -fd` | 用户未提交的修改全部丢失 | 只恢复自己改坏的那个文件，先问用户 |
 
 - 改文件优先用编辑工具。
-- 用命令改之前看 `git status`。文件没被 Git 跟踪，或者有用户未提交的修改时，先复制到系统临时目录（`/tmp`），不要在项目里留备份文件。
+- 用命令改之前看 `git status`。文件没被 Git 跟踪，或者有用户未提交的修改时，先复制到 `.agents/tmp/`，不要在源码目录里留备份文件。
 - 改完立刻看 `git diff`，确认文件没有变空；能做语法检查的就做（`python -m py_compile`、`python -m json.tool`）。
 
 ---

@@ -12,8 +12,10 @@
 | 备份文件 | `model_bak.py`、`model.py.orig`、`model_copy.py`、`model (1).py` | 直接修改原文件，依赖 Git 保存历史 |
 | 代码归档目录 | `archive/`、`old/`、`legacy/`、`deprecated/`、`backup/` | 删除旧代码文件 |
 | 平行目录 | `models/` 和 `models_new/` 并存 | 只保留 `models/`，在原目录中替换 |
-| 临时代码残留 | `test_tmp.py`、`debug.py`、`scratch.ipynb` | 用完就删除 |
+| 临时代码残留 | 源码目录里的 `test_tmp.py`、`debug.py`、`scratch.ipynb` | 放在 `.agents/tmp/`，任务结束时列给用户 |
 | 未经要求的总结文档 | `CHANGES.md`、`MIGRATION.md`、`SUMMARY.md` | 修改历史写进已有的 CHANGELOG、实验记录和修改索引，修改说明写进最终报告 |
+| 无人读取的记录文件 | 内容重叠的多份 `*_decision.json`、`*_manifest.json`，没有代码读取，规范也不要求 | 写进已有的记录，见 records.md |
+| 指针目录 | 只有一份用 `../../../` 指向别处的文件 | 当前有效的结果写在实验记录里 |
 
 ### 代码层面
 
@@ -46,6 +48,9 @@
 | 过时示例 | README 中的命令仍使用旧参数 | 改成能运行的新命令 |
 | 过时 docstring | 函数已改，docstring 仍描述旧行为 | 同步改写 |
 | 改写历史文档 | 把 CHANGELOG、实验记录或修改记录中的旧方法名替换掉 | 历史条目保持原样，只追加新条目 |
+| 同一段历史写在多处 | README、说明文档、决策文件各写一遍“A → B → C” | 只写在负责它的一处，其他地方引用 |
+| 正文手抄哈希或 digest | README 里列一长串 `sha256:...` | 写名称，再写“具体版本见某个文件” |
+| 状态文件一层层追加 | 决策文件里叠 `revision_xxx`，顶层 `status` 已过时 | 直接改成当前值，历史在实验记录中写一行 |
 | 擅自修改用户的规则文件 | 直接改写 AGENTS.md、CLAUDE.md 中的描述 | 列入清单，用户确认后再改，见 change-index.md 中“与 AGENTS.md、CLAUDE.md 的关系” |
 
 ### 实验产物层面
@@ -173,8 +178,9 @@
 
 ### 临时代码
 
-- 调试脚本优先放在系统临时目录，例如 `/tmp`。
-- 如果只能放在项目目录中，最终报告前必须删除。
+- 调试脚本、一次性脚本、诊断输出放在项目根目录的 `.agents/tmp/`。
+- 第一次创建时，把 `.agents/tmp/` 加进 `.gitignore`，并告诉用户。
+- 最终报告中列出其中的文件，用户确认后再删除。
 - 这里说的是 agent 写的临时代码，不包括实验产物。实验产物按 artifacts.md 处理。
 
 ### 新增接口前先查

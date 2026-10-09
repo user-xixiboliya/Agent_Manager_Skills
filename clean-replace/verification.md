@@ -30,6 +30,7 @@ find . \
   -path ./.git -prune -o \
   -path ./node_modules -prune -o \
   -path ./.venv -prune -o \
+  -path ./.agents/tmp -prune -o \
   \( -iname '*_v[0-9]*' -o -iname '*_new*' -o -iname '*_old*' \
      -o -iname '*legacy*' -o -iname '*deprecated*' -o -iname '*_bak*' \
      -o -iname '*backup*' -o -iname '*.orig' -o -iname '*copy*' \
@@ -40,6 +41,14 @@ find . \
 
 - 没有本次新增的这类文件或目录。
 - 项目原本就有的这类文件或目录，要在报告中列出，但不擅自处理。
+
+再检查产物目录和证据目录里有没有混进缓存：
+
+```bash
+find <产物目录> \( -name .nv -o -name ComputeCache -o -name __pycache__ -o -name '*.pyc' -o -name .cache \) -print
+```
+
+有命中时在报告中列出，用户确认后删除，并查明是哪个缓存路径指到了产物目录，见 env-first 中的“缓存不要落进产物目录”。
 
 ## G.3 检查代码中的过渡标记
 
@@ -85,8 +94,8 @@ git grep -n -i -E '<旧标识>' -- '*.py' | grep -i -E 'except|get\(|or |default
 
 验证过程中产生的输出：
 
-- 优先写到系统临时目录
-- 必须写在项目中时，放进统一产物目录，并在报告中列出
+- 临时输出写到 `.agents/tmp/`
+- 正式的实验输出放进统一产物目录，并在报告中列出
 
 ## G.6 检查最终改动
 
@@ -157,10 +166,16 @@ git status
 |---|---|---|---|
 （没有则写“无”）
 
+## 临时文件和缓存
+- `.agents/tmp/` 中的文件：
+- 产物目录中发现的缓存：
+（没有则写“无”）
+
 ## 建议，未执行
 - 发现但不属于本次范围的问题；没有则写“无”
 
 ## 下一步需要你确认
 - 是否提交 commit，并给出建议的 commit message
 - 实验产物如何处理
+- 临时文件和缓存是否删除
 ```
