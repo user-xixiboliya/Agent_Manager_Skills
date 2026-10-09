@@ -7,6 +7,7 @@
 | Skill | 调用方式 | 用途 |
 |---|---|---|
 | [clean-replace](clean-replace/SKILL.md) | `/clean-replace` | 替换方法、模型、接口或实现路线时，彻底删除旧实现，同步更新所有引用、配置、测试和文档。禁止版本化副本、备份文件、兼容层和静默 fallback。修改前逐个文件扫描项目，并维护修改索引来缩小扫描范围。 |
+| [env-first](env-first/SKILL.md) | 安装、下载、GPU 相关任务时自动启用；也可以明确要求使用 | 动手前先查清机器环境（GPU、CUDA、Python 环境、镜像源和代理、磁盘、服务器的工作空间、外网访问和共用数据目录），写进项目的 AGENTS.md 或 CLAUDE.md。关于机器的结论必须有命令输出作为依据；下载失败先查目标是否存在、版本是否匹配；不新建多余的环境，不用 sed 改坏文件，不改全局配置。 |
 
 ## 安装
 
@@ -31,16 +32,18 @@ cp -r clean-replace ~/.claude/skills/
 Agent_Manager_Skills/
 ├── README.md
 ├── LICENSE
-└── clean-replace/
-    ├── SKILL.md            # 主文件：触发条件、确认点、原则、执行流程、检查清单
-    ├── failure-modes.md    # 常见的失败方式
-    ├── rules.md            # 禁止事项、命名、测试、文件增长
-    ├── scanning.md         # 阶段 B：逐个文件扫描；阶段 C：清单格式
-    ├── change-index.md     # 修改索引（docs/agent-index/）
-    ├── artifacts.md        # 实验产物管理
-    ├── asking-user.md      # 什么时候问用户、怎么问
-    ├── verification.md     # 残留检查命令和最终报告格式
-    └── examples.md         # 完整示例
+├── clean-replace/
+│   ├── SKILL.md            # 主文件：触发条件、确认点、原则、执行流程、检查清单
+│   ├── failure-modes.md    # 常见的失败方式
+│   ├── rules.md            # 禁止事项、命名、测试、文件增长
+│   ├── scanning.md         # 阶段 B：逐个文件扫描；阶段 C：清单格式
+│   ├── change-index.md     # 修改索引（docs/agent-index/）
+│   ├── artifacts.md        # 实验产物管理
+│   ├── asking-user.md      # 什么时候问用户、怎么问
+│   ├── verification.md     # 残留检查命令和最终报告格式
+│   └── examples.md         # 完整示例
+└── env-first/
+    └── SKILL.md            # 环境检查、档案格式、GPU/CUDA、Python 环境、下载排查、镜像源和代理、改文件、服务器
 ```
 
 ## 添加新的 skill
