@@ -1,21 +1,23 @@
-# 调整 batch size 和相关参数
+# 在显存目标以内把吞吐调到最高
 
 > train-preflight 的参考文件。阶段 D 读。
 
-## 基本原则
+## 目标
 
-主要依据 Google《Deep Learning Tuning Playbook》中“Choosing the batch size”一节：
+阶段 D 要做的，是在显存目标以内让吞吐（每秒处理的样本数）尽量高。能调的东西有好几类，每卡 batch 只是其中一类：
 
-- batch size 决定训练速度，不应该拿来直接调验证集指标。通常最合适的 batch size 就是硬件能支持的最大值。
-- 能放进显存的 batch size 很难事先算准。最简单的办法是按 2 的幂逐步增大，每个值跑少量步数，直到超出显存。
-- 加大 batch 的好处都建立在吞吐增长的前提上。没有饱和时，batch 翻倍，吞吐也应该接近翻倍，每步耗时基本不变；做不到，说明有 I/O 或多卡同步之类的瓶颈，应该先查清。吞吐只增长到某个 batch 为止时，只考虑不超过这个值的 batch，即使显存还放得下更大的。
-- 改了 batch size，学习率、动量等优化器参数和正则化参数通常都要重新调。
-- 梯度累积只是模拟更大的 batch，不会提高吞吐。
+| 调什么 | 主要影响 | 在哪一步 |
+|---|---|---|
+| 数值精度（混合精度） | 激活值显存、计算速度 | 第二步 |
+| 每卡 batch | 激活值显存、吞吐 | 第三步 |
+| 激活值怎么保存（梯度检查点） | 激活值显存、计算量 | 第四步 |
+| 模型状态放在哪（更省显存的优化器、ZeRO/FSDP 分片、offload） | 权重、梯度、优化器状态这部分固定占用；通信 | 第四步 |
+| 数据加载 | GPU 是否在等数据 | 第六步 |
+| 显存分配器 | 碎片 | 第七步 |
 
-落到本规范中：
+这些设置互相影响：精度和梯度检查点决定了每卡 batch 能开多大，每卡 batch 又影响吞吐。所以顺序是先定精度这类基础设置，再找每卡 batch；显存限制了吞吐时，再回头加省显存的手段。每改一处都重新实测峰值和吞吐，最后比较的是显存目标以内的吞吐，选吞吐最高的组合，而不是显存最省的组合。
 
-- 每卡 batch 往大调，是为了吞吐；目标是在显存目标以内、吞吐还在增长的范围里取最大值。
-- 等效 batch 是否跟着变，属于会改变训练结果的决定，必须问用户。用户要求等效 batch 不变时，用梯度累积补足，这时梯度累积是为了保持等效 batch，而不是为了提速。
+反过来也不要过度优化。HuggingFace 的单卡训练指南提醒：想要的配置本来就放得下时，不需要再加省显存的手段，梯度检查点、offload 这类手段会拖慢训练。
 
 ## 调整顺序
 
@@ -23,26 +25,65 @@
 
 在确认点 1 中已经问过用户哪些参数允许调整。没有说明的，默认等效 batch、学习率及其调度、精度、序列长度或分辨率、优化器都保持不变。
 
-### 第二步：用 2 的幂找上限
+### 第二步：先定精度和几乎无代价的设置
+
+这些设置会改变显存占用和速度，要在找每卡 batch 之前定下来，否则找到的 batch 上限换了设置后就不准了。
+
+- **混合精度**：项目还没用时，在支持 bf16 的卡上通常是最先推荐的一步：多数情况下既提速，又省激活值显存。但它改变数值精度，属于会改变训练结果的修改，要问用户。
+  - 按 HuggingFace 文档，节省主要来自激活值以半精度保存，这部分大致减半；梯度会转回全精度做更新，这部分不省；模型大、batch 小时，显存里同时有半精度和全精度两份权重，占用反而可能更多。PyTorch 的 `torch.autocast` 不另存半精度权重（见 estimation.md）。
+  - bf16 的数值范围和 fp32 相同，需要 Ampere 及以上的卡，用 `torch.cuda.is_bf16_supported()` 确认；fp16 范围小，要配合 `GradScaler` 防止梯度下溢。
+  - 冒烟测试和正式训练的精度设置必须一致。
+- **评估 batch**：评估不算梯度，可以和训练用不同的 batch。评估阶段峰值最高时，单独调小评估 batch，不影响训练结果。
+- **显存分配器**：碎片明显时（reserved 比 allocated 高出很多）按第七步设置。
+
+### 第三步：找每卡 batch 的上限
+
+每卡 batch 的作用是提高吞吐。按 Google《Deep Learning Tuning Playbook》中“Choosing the batch size”一节：
+
+- 通常最合适的是硬件能支持、吞吐还在增长的最大值。没有饱和时，batch 翻倍，吞吐也应该接近翻倍；做不到，说明有 I/O 或多卡同步之类的瓶颈，先按第六步查清。吞吐不再增长时，即使显存还放得下，也不再加大。
+- batch size 不用来调验证集指标。改了等效 batch，学习率、动量和正则化参数通常都要重新调，见“学习率和 batch 的关系”。
+- 能放下多大很难事先算准，要实测。
+
+做法：
 
 1. 从当前的每卡 batch 开始（太小时从 1 开始），按 2 的幂逐步加倍。
 2. 每个值用最坏情况的 batch 跑训练、评估、保存三个阶段，按 smoke-test.md 的“第二级”记录峰值；再用随机 batch 按“第三级”测吞吐。
 3. 每个值单独起一个进程测试。一次 OOM 之后，同一个进程里的显存分配状态已经被打乱，接着测的结果不可靠。
-4. 每个值的结果（每卡 batch、三个阶段的峰值、nvidia-smi 进程峰值、吞吐、是否 OOM）写进结果目录的 `sweep.json`。
-5. 出现以下任一情况就停止加倍：OOM；峰值超过显存目标；batch 翻倍但吞吐增长很少。
+4. 出现以下任一情况就停止加倍：OOM；峰值超过显存目标；batch 翻倍但吞吐增长很少。
+5. 在最后一个满足要求的值和第一个不满足的值之间二分细找。吞吐已经停止增长时不用细找。细找出来的值不一定是 2 的幂，和吞吐更好的 2 的幂相差不大时可以取 2 的幂，在报告中写明取舍。
+6. 每个值的结果（每卡 batch、三个阶段的峰值、nvidia-smi 进程峰值、吞吐、是否 OOM）写进结果目录的 `sweep.json`。
 
-PyTorch Lightning 的 batch size finder 也是这个思路：`power` 模式不断加倍直到 OOM，`binsearch` 模式在加倍遇到 OOM 后再做二分查找；每次尝试默认跑 3 步（`steps_per_trial`）。项目用 Lightning 时可以直接用它找上限，但要注意：它目前不支持 DDP；它以训练步是否 OOM 为界，不留显存余量，找到的值通常要再往下调；评估和保存阶段的峰值仍要按 smoke-test.md 另外测。
+停下来时吞吐还在增长，说明显存限制了吞吐；每卡 batch 为 1 也放不下时更是如此。这时进入第四步。
 
-### 第三步：在上限附近细找
+项目用 PyTorch Lightning 时，可以用它的 batch size finder 找上限：`power` 模式不断加倍直到 OOM，`binsearch` 模式在加倍遇到 OOM 后再二分。注意它目前不支持 DDP；它以训练步是否 OOM 为界，不留显存余量；评估和保存阶段的峰值仍要按 smoke-test.md 另外测。
 
-在最后一个满足要求的值和第一个不满足的值之间二分，找出峰值不超过显存目标的最大每卡 batch。
+### 第四步：显存限制了吞吐时，从轻到重加手段
 
-- 吞吐已经在更小的 batch 上停止增长时，不需要细找，取吞吐停止增长处的值。
-- 细找出来的值不一定是 2 的幂。和吞吐更好的 2 的幂相差不大时，可以取 2 的幂，在报告中写明取舍。
+先看显存主要花在哪里：权重、梯度、优化器状态这部分固定占用按 estimation.md 算出来，实测峰值减去它，大致就是激活值和临时张量。激活值占大头时，梯度检查点、缩短序列有效；固定占用占大头时，要靠更省显存的优化器、分片或 offload。
 
-### 第四步：保持等效 batch
+下表按代价从轻到重排列，大多可以和第二步的混合精度叠加，也可以互相叠加：
 
-用户要求等效 batch 不变时：
+| 顺序 | 手段 | 省的是哪部分 | 代价 | 类别 |
+|---|---|---|---|---|
+| 1 | 梯度检查点 | 激活值：只保存部分中间结果，反向时重新计算 | 训练变慢，HuggingFace 文档给的经验值约 20% | 只影响速度和显存 |
+| 2 | 较小的每卡 batch 加梯度累积 | 本身不省显存，峰值由每卡 batch 决定；作用是在每卡 batch 变小后保持等效 batch | 每卡 batch 越小、累积步数越多，吞吐降得越多 | 保持等效 batch 时只影响速度和显存 |
+| 3 | 更省显存的优化器（如 8-bit Adam） | 优化器状态 | 依实现而定 | 会改变训练结果 |
+| 4 | ZeRO、FSDP 分片（仅多卡） | 优化器状态、梯度、参数，分到各张卡上 | 通信增加；改动大 | 一般不改变结果，但必须先问用户 |
+| 5 | Offload：把优化器状态、参数换到 CPU 内存或 NVMe | 优化器状态、参数 | CPU 和 GPU 之间的传输成为瓶颈，明显变慢；还占内存或硬盘 | 必须先问用户，作为最后手段 |
+| 6 | 缩短序列、降低分辨率 | 激活值 | 训练的内容变了 | 会改变训练结果 |
+
+各项的要点：
+
+- **梯度检查点**：Chen 等人 2016 年的论文《Training Deep Nets with Sublinear Memory Cost》提出，n 层的网络每隔约 √n 层存一次，激活值显存可以降到 √n 量级，代价是每个 batch 大约多一次前向计算；论文中 1000 层的 ResNet 从 48G 降到 7G，运行时间多约 30%。它只省激活值，固定占用不变。是否值得用，看实测：省出的显存换成更大的每卡 batch 后，吞吐的提升能不能抵过重算的损失；或者不开就放不下。`torch.utils.checkpoint` 默认保存并恢复随机数状态，dropout 不受影响；调用时按所用 torch 版本的文档明确传 `use_reentrant`。
+- **梯度累积**：它不降低峰值，也不提高吞吐，作用是在每卡 batch 受显存限制时保持等效 batch，做法见第五步。每卡 batch 仍要取放得下的最大值。HuggingFace 文档的例子：每卡 batch 4 已经到显存上限、想要等效 batch 64 时，用 4 × 16，而不是 1 × 64。
+- **ZeRO、FSDP**：普通的多卡数据并行（DDP）中，每张卡都存一份完整的参数、梯度和优化器状态。ZeRO 论文给出：只分片优化器状态（Stage 1），这部分模型状态的显存约降到 1/4；再分片梯度（Stage 2）约降到 1/8，这两级通信量和普通数据并行相同；再分片参数（Stage 3），显存随卡数成比例下降，通信量约为 1.5 倍。这些比例是论文按混合精度 Adam 和较多卡数算的，只针对模型状态，激活值不受影响，激活值大时还要配合梯度检查点。FSDP 是 PyTorch 自带的实现，计算前把分片的参数收集齐，算完再分开。单卡上分片没有作用。
+- **Offload**：DeepSpeed 的 ZeRO-Infinity 可以换到 CPU 内存和 NVMe，FSDP 也支持换到 CPU。ZeRO 论文提到，此前把模型状态放到 CPU 的方法，最多有 50% 的训练时间花在 GPU 和 CPU 之间的传输上。用之前按 env-first 查清内存和硬盘是否够用。
+
+每加一项手段，都按 smoke-test.md 的“第二级”“第三级”重新测峰值和吞吐，记进 `sweep.json`，再回到第三步，看省出来的显存能不能换成更大的每卡 batch。考虑过但没用的手段，也在报告中写明原因。
+
+### 第五步：保持等效 batch
+
+用户要求等效 batch 不变时，用梯度累积补足：
 
 ```text
 梯度累积步数 = 等效 batch ÷ (每卡 batch × 卡数)
@@ -51,20 +92,6 @@ PyTorch Lightning 的 batch size finder 也是这个思路：`power` 模式不�
 - 除不尽时，不自行取整，把最接近的几种组合和对应的等效 batch 列给用户选。
 - 检查训练代码在梯度累积时是否正确：loss 要除以累积步数（或者框架已经处理）；学习率调度和日志的步数按优化器更新次数算，而不是按前向次数算；多卡时，累积中间的几步可以用 `no_sync()` 跳过梯度同步。
 - 用了 BatchNorm 时，BatchNorm 的统计量只看每卡 batch，梯度累积不会让它变大，见下文“注意事项”。
-
-### 第五步：显存仍然不够时
-
-按下表从上往下考虑，注意每项属于哪一类：
-
-| 手段 | 作用 | 类别 |
-|---|---|---|
-| 单独设置评估 batch | 评估不算梯度，可以和训练用不同的 batch | 只影响速度和显存 |
-| 梯度检查点 | 只保存部分激活值，反向时重新计算，用计算时间换显存 | 只影响速度和显存（`torch.utils.checkpoint` 默认保存并恢复随机数状态，dropout 不受影响） |
-| 显存分配器设置 | 减少碎片，见下文 | 只影响速度和显存 |
-| 混合精度（bf16、fp16） | 激活值和部分权重副本变小 | 会改变训练结果 |
-| 更省显存的优化器（如 8-bit Adam） | 优化器状态变小 | 会改变训练结果 |
-| 缩短序列、降低分辨率 | 激活值变小 | 会改变训练结果 |
-| ZeRO、FSDP 等分片方式 | 优化器状态等分到多张卡 | 一般不改变结果，但改动大，必须先问用户 |
 
 ### 第六步：数据加载
 
@@ -108,6 +135,11 @@ GPU 利用率偏低、等数据的时间占比高时，调整 DataLoader：
 
 - Google Research，《Deep Learning Tuning Playbook》，“Choosing the batch size”“Batch normalization implementation details”“Considerations for multi-host pipelines”各节：https://github.com/google-research/tuning_playbook
 - PyTorch Lightning，“Batch Size Finder”：https://lightning.ai/docs/pytorch/stable/advanced/training_tricks.html
+- HuggingFace Transformers，《Methods and tools for efficient training on a single GPU》中“Gradient Accumulation”“Gradient Checkpointing”“Mixed precision training”各节（v4.46 版本，新版文档已改版）：https://github.com/huggingface/transformers/blob/v4.46.0/docs/source/en/perf_train_gpu_one.md
+- Chen et al., 2016，《Training Deep Nets with Sublinear Memory Cost》：https://arxiv.org/abs/1604.06174
+- Rajbhandari et al., 2020，《ZeRO: Memory Optimizations Toward Training Trillion Parameter Models》：https://arxiv.org/abs/1910.02054
+- DeepSpeed，“Zero Redundancy Optimizer”教程：https://www.deepspeed.ai/tutorials/zero/
+- PyTorch，“Getting Started with Fully Sharded Data Parallel (FSDP2)”：https://docs.pytorch.org/tutorials/intermediate/FSDP_tutorial.html
 - PyTorch，CUDA semantics 中的“Memory management”“Optimizing memory usage with PYTORCH_ALLOC_CONF”两节：https://docs.pytorch.org/docs/stable/notes/cuda.html
 - Goyal et al., 2017，《Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour》：https://arxiv.org/abs/1706.02677
 - Malladi et al., 2022，《On the SDEs and Scaling Rules for Adaptive Gradient Algorithms》：https://arxiv.org/abs/2205.10287

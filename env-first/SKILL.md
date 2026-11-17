@@ -158,7 +158,7 @@ description: 在安装、下载、使用 GPU 或 CUDA 之前，先查清机器�
 
 - 用 `nvidia-smi` 看各卡的显存和利用率，选空闲的卡，并遵守用户约定。
 - 用 `CUDA_VISIBLE_DEVICES` 明确指定卡号。
-- 显存不足时，先看是不是别人占着，再考虑减小 batch size。
+- 显存不足时，先看是不是别人占着，再考虑混合精度、梯度检查点、减小 batch size 等手段；训练前的完整做法见 train-preflight。
 - 不结束不是自己启动的 GPU 进程。
 
 ---
