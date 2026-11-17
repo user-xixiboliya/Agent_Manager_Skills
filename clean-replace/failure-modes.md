@@ -121,3 +121,33 @@ name = cfg.get("encoder", "resnet")     # 配置没写时，默认使用旧方�
 - 用户明确同意后才能写。写入的 fallback 必须满足：
   - 触发时输出明确的日志或警告
   - 在最终报告中列出 fallback 的位置和触发条件
+
+## 防御性代码泛滥：每一处都检查一遍
+
+**表现**：函数开头先写一长串检查，每个字段都查一遍类型和取值，真正干活的代码反而只有几行。
+
+```python
+def build_encoder(dim, depth, heads, dropout):
+    if not isinstance(dim, int):
+        raise ValueError("dim must be int")
+    if not isinstance(depth, int):
+        raise ValueError("depth must be int")
+    if not isinstance(heads, int):
+        raise ValueError("heads must be int")
+    if not isinstance(dropout, float):
+        raise ValueError("dropout must be float")
+    if dim <= 0 or depth <= 0 or heads <= 0:
+        raise ValueError("dim, depth, heads must be positive")
+    return ViTEncoder(dim, depth, heads, dropout)
+```
+
+**为什么 agent 喜欢这样写**：和写 fallback 一样，它想让代码显得“健壮”。
+
+**后果**：
+
+- 代码变长，真正的逻辑被淹没，读的人要先跳过一大段检查
+- 检查本身也会写错：例如 `dropout` 传了整数 `0`，本来完全能用，却被拦下报错
+- 同一个参数在多处检查，改一次规则要改好几处，漏改一处就互相矛盾
+- 大多数检查防的是根本不会发生的情况；真正会出问题的外部输入反而没有集中检查
+
+**要求**：内部代码信任调用方，只在外部输入的边界集中检查一次，以及在“出错也不会自己报错”的地方加有针对性的检查。禁止写法和需要检查的地方见 rules.md 中的“防御性代码层面”。

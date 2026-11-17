@@ -58,7 +58,7 @@ git diff | grep -n -i -E '^\+.*(legacy|deprecated|TODO.*remov|backward.?compat|u
 
 要求：本次新增的代码中没有这类标记。
 
-## G.4 检查 fallback
+## G.4 检查 fallback 和防御性代码
 
 ```bash
 git diff -U0 | grep -n -E '^\+.*(except\b|ImportError|\.get\(.*,|getattr\(.*,.*,|\bor\s+[A-Z]\w*\(|fallback|fall back|默认使用|退回)'
@@ -78,6 +78,14 @@ git grep -n -i -E '<旧标识>' -- '*.py' | grep -i -E 'except|get\(|or |default
 ```
 
 要求：结果为零。
+
+再检查本次新增的防御性代码：
+
+```bash
+git diff -U0 | grep -n -E '^\+.*(isinstance\(|hasattr\(|raise (ValueError|TypeError)|is None|assert )'
+```
+
+逐个检查命中项，每一处都要能说出它防的是哪一种外部输入，或者哪个“出错也不会自己报错”的情况，见 rules.md 中的“防御性代码层面”。说不出来的删除；同一个值在多处检查的，只保留边界处的一处。
 
 ## G.5 运行检查
 
@@ -152,6 +160,7 @@ git status
 - 旧标识搜索命令及结果：
 - 版本化或备份文件检查结果：
 - 过渡标记检查结果：
+- 防御性代码检查结果：保留的检查及各自防的是什么
 - 白名单及原因：
 
 ## 验证结果
